@@ -6,7 +6,6 @@ const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 
 const app = express();
 
-
 const client = new MercadoPagoConfig({
   accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
 });
@@ -14,11 +13,26 @@ const client = new MercadoPagoConfig({
 app.use(cors());
 app.use(express.json());
 
+// 🔥 ROTA RAIZ PARA TESTE
+app.get('/', (req, res) => {
+  res.json({
+    message: '🚀 API FretesMT funcionando!',
+    version: '1.0.0',
+    endpoints: {
+      criarPreferencia: 'POST /api/criar-preferencia',
+      notificacao: 'POST /api/notificacao-pagamento',
+      status: 'GET /api/status-pagamento/:preferenceId'
+    }
+  });
+});
+
+// 🔥 ROTA PARA CRIAR PREFERÊNCIA
 app.post('/api/criar-preferencia', async (req, res) => {
   try {
     const { items, payer, backUrls, autoReturn } = req.body;
 
-  
+    console.log('📥 Criando preferência para:', items);
+
     const preference = new Preference(client);
 
     const body = {
@@ -34,10 +48,13 @@ app.post('/api/criar-preferencia', async (req, res) => {
       back_urls: backUrls || {},
       auto_return: autoReturn || 'approved',
       statement_descriptor: 'FRETESMT',
-      notification_url: `http://10.0.0.142:3000/api/notificacao-pagamento`
+      // 🔥 CORRIGIDO: URL do Render
+      notification_url: `https://fretesmt-backend.onrender.com/api/notificacao-pagamento`
     };
 
     const response = await preference.create({ body });
+
+    console.log('✅ Preferência criada:', response.id);
 
     res.status(200).json({
       success: true,
@@ -46,7 +63,7 @@ app.post('/api/criar-preferencia', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Erro ao criar preferência:', error);
+    console.error('❌ Erro ao criar preferência:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -54,7 +71,7 @@ app.post('/api/criar-preferencia', async (req, res) => {
   }
 });
 
-
+// 🔥 WEBHOOK PARA NOTIFICAÇÕES
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
     const { id, topic } = req.body;
@@ -81,7 +98,7 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
   }
 });
 
-
+// 🔥 ROTA PARA CONSULTAR STATUS
 app.get('/api/status-pagamento/:preferenceId', async (req, res) => {
   try {
     const { preferenceId } = req.params;
@@ -100,21 +117,9 @@ app.get('/api/status-pagamento/:preferenceId', async (req, res) => {
   }
 });
 
-
-app.get('/', (req, res) => {
-  res.json({
-    message: '🚀 API FretesMT funcionando!',
-    version: '1.0.0',
-    endpoints: {
-      criarPreferencia: 'POST /api/criar-preferencia',
-      notificacao: 'POST /api/notificacao-pagamento',
-      status: 'GET /api/status-pagamento/:preferenceId'
-    }
-  });
-});
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
-  console.log(`📡 URL: http://10.0.0.142:${PORT}`);
+  // 🔥 CORRIGIDO: URL do Render
+  console.log(`📡 URL: https://fretesmt-backend.onrender.com`);
 });
