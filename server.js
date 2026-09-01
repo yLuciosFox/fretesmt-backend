@@ -49,7 +49,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// 🔥 CRIAR PREFERÊNCIA (COM BUSCA NO FIRESTORE)
+// 🔥 CRIAR PREFERÊNCIA
 app.post('/api/criar-preferencia', async (req, res) => {
   try {
     const { items, payer, autoReturn, backUrls } = req.body;
@@ -57,7 +57,7 @@ app.post('/api/criar-preferencia', async (req, res) => {
     console.log('📥 Criando preferência para:', items);
     console.log('👤 Payer recebido:', payer);
 
-    // 🔥 🔥 🔥 BUSCAR O UID NO FIRESTORE PELO EMAIL
+    // 🔥 BUSCAR O UID NO FIRESTORE PELO EMAIL
     let firebaseUid = null;
     if (payer && payer.email) {
       try {
@@ -69,7 +69,6 @@ app.post('/api/criar-preferencia', async (req, res) => {
           firebaseUid = userDoc.id;
           console.log(`✅ UID encontrado no Firestore para ${payer.email}: ${firebaseUid}`);
           
-          // 🔥 PEGAR DADOS COMPLETOS DO USUÁRIO
           const userData = userDoc.data();
           console.log(`📊 Dados do usuário:`, {
             nome: userData.nome,
@@ -85,7 +84,6 @@ app.post('/api/criar-preferencia', async (req, res) => {
 
     const preference = new Preference(client);
 
-    // 🔥 CORPO DA REQUISIÇÃO COM METADATA
     const body = {
       items: items.map(item => ({
         id: item.id,
@@ -103,7 +101,7 @@ app.post('/api/criar-preferencia', async (req, res) => {
         }
       },
       back_urls: backUrls || {
-        success: 'fretesmt://pagamento/sucesso',
+        success: `fretesmt://pagamento/sucesso?planoId=${items[0]?.id?.replace('plano_', '') || ''}`,
         failure: 'fretesmt://pagamento/erro',
         pending: 'fretesmt://pagamento/pendente'
       },
@@ -168,7 +166,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
   }
 }
 
-// 🔥 WEBHOOK - VERSÃO COMPLETA
+// 🔥 WEBHOOK - VERSÃO SIMPLIFICADA
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
     const body = req.body;
@@ -226,40 +224,13 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         console.log(`💰 Valor: R$ ${amount}`);
         console.log(`📦 Quantidade de anúncios: ${quantidade}`);
         
-        // 🔥 🔥 🔥 EXTRAIR O UID DA PREFERÊNCIA (VIA URL DE SUCESSO)
+        // 🔥 🔥 🔥 BUSCAR O UID NO FIRESTORE PELO EMAIL
         let uid = null;
+        const payerEmail = response.payer?.email || null;
         
-        try {
-          const preferenceId = response.preference_id;
-          if (preferenceId) {
-            console.log(`🔍 Buscando preferência: ${preferenceId}`);
-            const preference = new Preference(client);
-            const prefResponse = await preference.get({ preferenceId });
-            
-            // Extrair o UID da URL de sucesso
-            const successUrl = prefResponse.back_urls?.success || '';
-            console.log(`🔗 URL de sucesso: ${successUrl}`);
-            
-            const match = successUrl.match(/uid=([^&]+)/);
-            if (match) {
-              uid = match[1];
-              console.log(`✅ UID extraído da URL de sucesso: ${uid}`);
-            } else {
-              console.log(`⚠️ Nenhum UID encontrado na URL: ${successUrl}`);
-            }
-          } else {
-            console.log('⚠️ Nenhum preference_id encontrado na resposta');
-          }
-        } catch (prefError) {
-          console.log('⚠️ Erro ao buscar preferência:', prefError.message);
-        }
-        
-        // 🔥 FALLBACK: tentar por email
-        if (!uid) {
-          const payerEmail = response.payer?.email || null;
-          console.log(`🔄 Tentando fallback por email: ${payerEmail}`);
-          
-          if (payerEmail && payerEmail !== 'XXXXXXXXXXX') {
+        if (payerEmail && payerEmail !== 'XXXXXXXXXXX') {
+          console.log(`🔍 Buscando usuário pelo email: ${payerEmail}`);
+          try {
             const usersRef = db.collection('usuarios');
             const snapshot = await usersRef.where('email', '==', payerEmail).get();
             
@@ -270,7 +241,11 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
             } else {
               console.log(`❌ Nenhum usuário encontrado com o email: ${payerEmail}`);
             }
+          } catch (error) {
+            console.error('❌ Erro ao buscar usuário:', error.message);
           }
+        } else {
+          console.log(`❌ Email do pagador não disponível ou oculto: ${payerEmail}`);
         }
         
         // 🔥 ATUALIZAR O FIRESTORE
@@ -281,8 +256,7 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         } else {
           console.log('❌ NENHUM UID ENCONTRADO!');
           console.log('📝 Dados disponíveis:');
-          console.log(`   - Email: ${response.payer?.email || 'N/A'}`);
-          console.log(`   - Preference ID: ${response.preference_id || 'N/A'}`);
+          console.log(`   - Email: ${payerEmail || 'N/A'}`);
         }
         
         return res.status(200).json({
