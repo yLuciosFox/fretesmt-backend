@@ -69,7 +69,7 @@ app.post('/api/criar-preferencia', async (req, res) => {
           firebaseUid = userDoc.id;
           console.log(`✅ UID encontrado no Firestore para ${payer.email}: ${firebaseUid}`);
           
-          // 🔥 PEGAR DADOS COMPLETOS DO USUÁRIO (opcional)
+          // 🔥 PEGAR DADOS COMPLETOS DO USUÁRIO
           const userData = userDoc.data();
           console.log(`📊 Dados do usuário:`, {
             nome: userData.nome,
@@ -98,7 +98,6 @@ app.post('/api/criar-preferencia', async (req, res) => {
       payer: {
         name: payer?.name || 'Usuário',
         email: payer?.email || 'usuario@email.com',
-        // 🔥 🔥 🔥 METADATA COM O UID ENCONTRADO
         metadata: {
           firebase_uid: firebaseUid || ''
         }
@@ -227,13 +226,32 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         console.log(`💰 Valor: R$ ${amount}`);
         console.log(`📦 Quantidade de anúncios: ${quantidade}`);
         
-        // 🔥 🔥 🔥 EXTRAIR O UID DO METADATA
+        // 🔥 🔥 🔥 EXTRAIR O UID DA PREFERÊNCIA (VIA URL DE SUCESSO)
         let uid = null;
         
-        // 🔥 PRIORIDADE 1: metadata do pagador
-        if (response.payer?.metadata?.firebase_uid) {
-          uid = response.payer.metadata.firebase_uid;
-          console.log(`✅ UID encontrado no metadata do pagador: ${uid}`);
+        try {
+          const preferenceId = response.preference_id;
+          if (preferenceId) {
+            console.log(`🔍 Buscando preferência: ${preferenceId}`);
+            const preference = new Preference(client);
+            const prefResponse = await preference.get({ preferenceId });
+            
+            // Extrair o UID da URL de sucesso
+            const successUrl = prefResponse.back_urls?.success || '';
+            console.log(`🔗 URL de sucesso: ${successUrl}`);
+            
+            const match = successUrl.match(/uid=([^&]+)/);
+            if (match) {
+              uid = match[1];
+              console.log(`✅ UID extraído da URL de sucesso: ${uid}`);
+            } else {
+              console.log(`⚠️ Nenhum UID encontrado na URL: ${successUrl}`);
+            }
+          } else {
+            console.log('⚠️ Nenhum preference_id encontrado na resposta');
+          }
+        } catch (prefError) {
+          console.log('⚠️ Erro ao buscar preferência:', prefError.message);
         }
         
         // 🔥 FALLBACK: tentar por email
@@ -264,7 +282,7 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
           console.log('❌ NENHUM UID ENCONTRADO!');
           console.log('📝 Dados disponíveis:');
           console.log(`   - Email: ${response.payer?.email || 'N/A'}`);
-          console.log(`   - Metadata: ${JSON.stringify(response.payer?.metadata || {})}`);
+          console.log(`   - Preference ID: ${response.preference_id || 'N/A'}`);
         }
         
         return res.status(200).json({
