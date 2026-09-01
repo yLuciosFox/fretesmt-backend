@@ -72,7 +72,6 @@ app.post('/api/criar-preferencia', async (req, res) => {
       payer: {
         name: payer?.name || 'Usuário',
         email: payer?.email || 'usuario@email.com',
-        // 🔥 🔥 🔥 METADATA COM O UID
         metadata: {
           firebase_uid: payer?.uid || ''
         }
@@ -143,7 +142,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
   }
 }
 
-// 🔥 WEBHOOK - VERSÃO FINAL COM METADATA
+// 🔥 WEBHOOK - VERSÃO FINAL
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
     const body = req.body;
@@ -233,7 +232,7 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
           const atualizado = await atualizarPlanosPorUid(uid, quantidade);
           console.log(`✅ Firestore atualizado: ${atualizado}`);
         } else {
-          console.log('❌ Nenhum UID encontrado para atualizar o Firestore');
+          console.log('❌ NENHUM UID ENCONTRADO!');
           console.log('📝 Dados disponíveis:');
           console.log(`   - Email: ${response.payer?.email || 'N/A'}`);
           console.log(`   - Metadata: ${JSON.stringify(response.payer?.metadata || {})}`);
