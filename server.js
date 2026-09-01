@@ -49,7 +49,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// 🔥 CRIAR PREFERÊNCIA (COM SALVAMENTO DO UID)
+// 🔥 CRIAR PREFERÊNCIA
 app.post('/api/criar-preferencia', async (req, res) => {
   try {
     const { items, payer, autoReturn, backUrls } = req.body;
@@ -110,13 +110,15 @@ app.post('/api/criar-preferencia', async (req, res) => {
 
     console.log('✅ Preferência criada:', response.id);
 
-    // 🔥 🔥 🔥 SALVAR O UID NO FIRESTORE COM O PREFERENCE_ID
+    // 🔥 🔥 🔥 SALVAR O UID COM O PREFERENCE_ID NO FIRESTORE
     if (firebaseUid) {
       try {
         await db.collection('preferencias').doc(response.id).set({
           uid: firebaseUid,
           email: payer?.email || '',
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          planoId: items[0]?.id?.replace('plano_', '') || '',
+          quantidade: items[0]?.quantity || 1
         });
         console.log(`✅ UID ${firebaseUid} salvo com preference_id: ${response.id}`);
       } catch (saveError) {
@@ -174,7 +176,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
   }
 }
 
-// 🔥 WEBHOOK - VERSÃO SIMPLES E DEFINITIVA
+// 🔥 WEBHOOK
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
     const body = req.body;
@@ -221,7 +223,6 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         
         const amount = response.transaction_amount || 0;
         
-        // 🔥 DETERMINAR QUANTIDADE
         let quantidade = 1;
         if (amount === 15.99) quantidade = 1;
         else if (amount === 25.99) quantidade = 2;
@@ -251,7 +252,23 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
             console.log('⚠️ Erro ao buscar referência:', error.message);
           }
         } else {
-          console.log('⚠️ Nenhum preference_id encontrado na resposta');
+          console.log('⚠️ Nenhum preference_id encontrado na resposta do webhook');
+          console.log('📝 Tentando buscar pelo email do pagador...');
+          
+          // 🔥 FALLBACK: buscar pelo email no Firestore
+          const payerEmail = response.payer?.email || null;
+          if (payerEmail && payerEmail !== 'XXXXXXXXXXX') {
+            try {
+              const usersRef = db.collection('usuarios');
+              const snapshot = await usersRef.where('email', '==', payerEmail).get();
+              if (!snapshot.empty) {
+                uid = snapshot.docs[0].id;
+                console.log(`✅ UID encontrado pelo email: ${uid}`);
+              }
+            } catch (error) {
+              console.error('Erro ao buscar por email:', error.message);
+            }
+          }
         }
         
         // 🔥 ATUALIZAR O FIRESTORE
@@ -261,6 +278,9 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
           console.log(`✅ Firestore atualizado: ${atualizado}`);
         } else {
           console.log('❌ NENHUM UID ENCONTRADO!');
+          console.log('📝 Dados disponíveis:');
+          console.log(`   - Preference ID: ${preferenceId || 'N/A'}`);
+          console.log(`   - Email: ${response.payer?.email || 'N/A'}`);
         }
         
         // 🔥 LIMPAR A REFERÊNCIA (opcional)
