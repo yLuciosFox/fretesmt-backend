@@ -49,7 +49,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// 🔥 CRIAR PREFERÊNCIA
+// 🔥 CRIAR PREFERÊNCIA (COM SALVAMENTO DO UID)
 app.post('/api/criar-preferencia', async (req, res) => {
   try {
     const { items, payer, autoReturn, backUrls } = req.body;
@@ -68,17 +68,11 @@ app.post('/api/criar-preferencia', async (req, res) => {
           const userDoc = snapshot.docs[0];
           firebaseUid = userDoc.id;
           console.log(`✅ UID encontrado no Firestore para ${payer.email}: ${firebaseUid}`);
-          
-          const userData = userDoc.data();
-          console.log(`📊 Dados do usuário:`, {
-            nome: userData.nome,
-            planosAdquiridos: userData.planosAdquiridos
-          });
         } else {
-          console.log(`❌ Usuário com email ${payer.email} não encontrado no Firestore`);
+          console.log(`❌ Usuário com email ${payer.email} não encontrado`);
         }
-      } catch (firestoreError) {
-        console.error('❌ Erro ao buscar usuário no Firestore:', firestoreError.message);
+      } catch (error) {
+        console.error('❌ Erro ao buscar usuário:', error.message);
       }
     }
 
@@ -115,6 +109,20 @@ app.post('/api/criar-preferencia', async (req, res) => {
     const response = await preference.create({ body });
 
     console.log('✅ Preferência criada:', response.id);
+
+    // 🔥 🔥 🔥 SALVAR O UID NO FIRESTORE COM O PREFERENCE_ID
+    if (firebaseUid) {
+      try {
+        await db.collection('preferencias').doc(response.id).set({
+          uid: firebaseUid,
+          email: payer?.email || '',
+          createdAt: Date.now()
+        });
+        console.log(`✅ UID ${firebaseUid} salvo com preference_id: ${response.id}`);
+      } catch (saveError) {
+        console.error('❌ Erro ao salvar referência:', saveError.message);
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -166,7 +174,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
   }
 }
 
-// 🔥 WEBHOOK - VERSÃO SIMPLIFICADA
+// 🔥 WEBHOOK - VERSÃO SIMPLES E DEFINITIVA
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
     const body = req.body;
@@ -224,28 +232,26 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         console.log(`💰 Valor: R$ ${amount}`);
         console.log(`📦 Quantidade de anúncios: ${quantidade}`);
         
-        // 🔥 🔥 🔥 BUSCAR O UID NO FIRESTORE PELO EMAIL
+        // 🔥 🔥 🔥 BUSCAR O UID NO FIRESTORE PELO PREFERENCE_ID
         let uid = null;
-        const payerEmail = response.payer?.email || null;
+        const preferenceId = response.preference_id;
         
-        if (payerEmail && payerEmail !== 'XXXXXXXXXXX') {
-          console.log(`🔍 Buscando usuário pelo email: ${payerEmail}`);
+        if (preferenceId) {
           try {
-            const usersRef = db.collection('usuarios');
-            const snapshot = await usersRef.where('email', '==', payerEmail).get();
+            console.log(`🔍 Buscando UID no Firestore com preference_id: ${preferenceId}`);
+            const prefDoc = await db.collection('preferencias').doc(preferenceId).get();
             
-            if (!snapshot.empty) {
-              const userDoc = snapshot.docs[0];
-              uid = userDoc.id;
-              console.log(`✅ UID encontrado pelo email: ${uid}`);
+            if (prefDoc.exists) {
+              uid = prefDoc.data().uid;
+              console.log(`✅ UID encontrado: ${uid}`);
             } else {
-              console.log(`❌ Nenhum usuário encontrado com o email: ${payerEmail}`);
+              console.log(`⚠️ preference_id ${preferenceId} não encontrado no Firestore`);
             }
           } catch (error) {
-            console.error('❌ Erro ao buscar usuário:', error.message);
+            console.log('⚠️ Erro ao buscar referência:', error.message);
           }
         } else {
-          console.log(`❌ Email do pagador não disponível ou oculto: ${payerEmail}`);
+          console.log('⚠️ Nenhum preference_id encontrado na resposta');
         }
         
         // 🔥 ATUALIZAR O FIRESTORE
@@ -255,8 +261,14 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
           console.log(`✅ Firestore atualizado: ${atualizado}`);
         } else {
           console.log('❌ NENHUM UID ENCONTRADO!');
-          console.log('📝 Dados disponíveis:');
-          console.log(`   - Email: ${payerEmail || 'N/A'}`);
+        }
+        
+        // 🔥 LIMPAR A REFERÊNCIA (opcional)
+        if (preferenceId) {
+          try {
+            await db.collection('preferencias').doc(preferenceId).delete();
+            console.log(`🗑️ Referência ${preferenceId} removida`);
+          } catch (e) {}
         }
         
         return res.status(200).json({
