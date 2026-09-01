@@ -49,7 +49,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// 🔥 CRIAR PREFERÊNCIA
+// 🔥 CRIAR PREFERÊNCIA (COM BUSCA NO FIRESTORE)
 app.post('/api/criar-preferencia', async (req, res) => {
   try {
     const { items, payer, autoReturn, backUrls } = req.body;
@@ -57,9 +57,35 @@ app.post('/api/criar-preferencia', async (req, res) => {
     console.log('📥 Criando preferência para:', items);
     console.log('👤 Payer recebido:', payer);
 
+    // 🔥 🔥 🔥 BUSCAR O UID NO FIRESTORE PELO EMAIL
+    let firebaseUid = null;
+    if (payer && payer.email) {
+      try {
+        const usersRef = db.collection('usuarios');
+        const snapshot = await usersRef.where('email', '==', payer.email).get();
+        
+        if (!snapshot.empty) {
+          const userDoc = snapshot.docs[0];
+          firebaseUid = userDoc.id;
+          console.log(`✅ UID encontrado no Firestore para ${payer.email}: ${firebaseUid}`);
+          
+          // 🔥 PEGAR DADOS COMPLETOS DO USUÁRIO (opcional)
+          const userData = userDoc.data();
+          console.log(`📊 Dados do usuário:`, {
+            nome: userData.nome,
+            planosAdquiridos: userData.planosAdquiridos
+          });
+        } else {
+          console.log(`❌ Usuário com email ${payer.email} não encontrado no Firestore`);
+        }
+      } catch (firestoreError) {
+        console.error('❌ Erro ao buscar usuário no Firestore:', firestoreError.message);
+      }
+    }
+
     const preference = new Preference(client);
 
-    // 🔥 CORPO DA REQUISIÇÃO
+    // 🔥 CORPO DA REQUISIÇÃO COM METADATA
     const body = {
       items: items.map(item => ({
         id: item.id,
@@ -69,9 +95,13 @@ app.post('/api/criar-preferencia', async (req, res) => {
         unit_price: item.unitPrice,
         currency_id: item.currencyId || 'BRL'
       })),
-      payer: payer || {
-        name: 'Usuário',
-        email: 'usuario@email.com'
+      payer: {
+        name: payer?.name || 'Usuário',
+        email: payer?.email || 'usuario@email.com',
+        // 🔥 🔥 🔥 METADATA COM O UID ENCONTRADO
+        metadata: {
+          firebase_uid: firebaseUid || ''
+        }
       },
       back_urls: backUrls || {
         success: 'fretesmt://pagamento/sucesso',
@@ -197,28 +227,13 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         console.log(`💰 Valor: R$ ${amount}`);
         console.log(`📦 Quantidade de anúncios: ${quantidade}`);
         
-        // 🔥 🔥 🔥 EXTRAIR O UID DA PREFERÊNCIA
+        // 🔥 🔥 🔥 EXTRAIR O UID DO METADATA
         let uid = null;
         
-        try {
-          const preferenceId = response.preference_id;
-          if (preferenceId) {
-            console.log(`🔍 Buscando preferência: ${preferenceId}`);
-            const preference = new Preference(client);
-            const prefResponse = await preference.get({ preferenceId });
-            
-            // Extrair o UID da URL de sucesso
-            const successUrl = prefResponse.back_urls?.success || '';
-            const match = successUrl.match(/uid=([^&]+)/);
-            if (match) {
-              uid = match[1];
-              console.log(`✅ UID extraído da URL de sucesso: ${uid}`);
-            } else {
-              console.log(`⚠️ Nenhum UID encontrado na URL: ${successUrl}`);
-            }
-          }
-        } catch (prefError) {
-          console.log('⚠️ Não foi possível buscar a preferência:', prefError.message);
+        // 🔥 PRIORIDADE 1: metadata do pagador
+        if (response.payer?.metadata?.firebase_uid) {
+          uid = response.payer.metadata.firebase_uid;
+          console.log(`✅ UID encontrado no metadata do pagador: ${uid}`);
         }
         
         // 🔥 FALLBACK: tentar por email
@@ -249,7 +264,6 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
           console.log('❌ NENHUM UID ENCONTRADO!');
           console.log('📝 Dados disponíveis:');
           console.log(`   - Email: ${response.payer?.email || 'N/A'}`);
-          console.log(`   - Preference ID: ${response.preference_id || 'N/A'}`);
           console.log(`   - Metadata: ${JSON.stringify(response.payer?.metadata || {})}`);
         }
         
