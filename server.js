@@ -59,6 +59,7 @@ app.post('/api/criar-preferencia', async (req, res) => {
 
     const preference = new Preference(client);
 
+    // 🔥 CORPO DA REQUISIÇÃO
     const body = {
       items: items.map(item => ({
         id: item.id,
@@ -70,7 +71,11 @@ app.post('/api/criar-preferencia', async (req, res) => {
       })),
       payer: {
         name: payer?.name || 'Usuário',
-        email: payer?.email || 'usuario@email.com'
+        email: payer?.email || 'usuario@email.com',
+        // 🔥 🔥 🔥 METADATA COM O UID
+        metadata: {
+          firebase_uid: payer?.uid || ''
+        }
       },
       back_urls: backUrls || {
         success: 'fretesmt://pagamento/sucesso',
@@ -81,6 +86,8 @@ app.post('/api/criar-preferencia', async (req, res) => {
       statement_descriptor: 'FRETESMT',
       notification_url: `https://fretesmt-backend.onrender.com/api/notificacao-pagamento`
     };
+
+    console.log('📦 Body enviado:', JSON.stringify(body, null, 2));
 
     const response = await preference.create({ body });
 
@@ -110,7 +117,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
     const userDoc = await userRef.get();
     
     if (!userDoc.exists) {
-      console.log(`❌ Usuário com UID ${uid} não encontrado`);
+      console.log(`❌ Usuário com UID ${uid} NÃO encontrado no Firestore`);
       return false;
     }
     
@@ -125,7 +132,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
       ultimaCompra: Date.now()
     });
     
-    console.log(`✅ Firestore atualizado para UID: ${uid}`);
+    console.log(`✅ Firestore ATUALIZADO para UID: ${uid}`);
     console.log(`✅ Novos planos: ${novosPlanos}`);
     
     return true;
@@ -136,7 +143,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
   }
 }
 
-// 🔥 WEBHOOK - VERSÃO FINAL
+// 🔥 WEBHOOK - VERSÃO FINAL COM METADATA
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
     const body = req.body;
@@ -148,7 +155,6 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
 
     console.log('📩 Webhook recebido:', JSON.stringify(body, null, 2));
 
-    // 🔥 IGNORA merchant_order
     if (body.topic === 'merchant_order') {
       console.log('📦 Merchant_order ignorado');
       return res.status(200).send('OK');
@@ -195,28 +201,13 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         console.log(`💰 Valor: R$ ${amount}`);
         console.log(`📦 Quantidade de anúncios: ${quantidade}`);
         
-        // 🔥 🔥 🔥 EXTRAIR O UID DOS BACK_URLS (via metadata da preferência)
-        // Buscar a preferência para pegar os back_urls
+        // 🔥 🔥 🔥 EXTRAIR O UID DO METADATA
         let uid = null;
         
-        try {
-          // Buscar a preferência original
-          const preferenceId = response.preference_id;
-          if (preferenceId) {
-            console.log(`🔍 Buscando preferência: ${preferenceId}`);
-            const preference = new Preference(client);
-            const prefResponse = await preference.get({ preferenceId });
-            
-            // Extrair o UID da URL de sucesso
-            const successUrl = prefResponse.back_urls?.success || '';
-            const match = successUrl.match(/uid=([^&]+)/);
-            if (match) {
-              uid = match[1];
-              console.log(`✅ UID extraído da URL: ${uid}`);
-            }
-          }
-        } catch (prefError) {
-          console.log('⚠️ Não foi possível buscar a preferência:', prefError.message);
+        // 🔥 PRIORIDADE 1: metadata do pagador
+        if (response.payer?.metadata?.firebase_uid) {
+          uid = response.payer.metadata.firebase_uid;
+          console.log(`✅ UID encontrado no metadata do pagador: ${uid}`);
         }
         
         // 🔥 FALLBACK: tentar por email
@@ -243,6 +234,9 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
           console.log(`✅ Firestore atualizado: ${atualizado}`);
         } else {
           console.log('❌ Nenhum UID encontrado para atualizar o Firestore');
+          console.log('📝 Dados disponíveis:');
+          console.log(`   - Email: ${response.payer?.email || 'N/A'}`);
+          console.log(`   - Metadata: ${JSON.stringify(response.payer?.metadata || {})}`);
         }
         
         return res.status(200).json({
