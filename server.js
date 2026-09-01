@@ -7,14 +7,11 @@ const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 // 🔥 FIREBASE ADMIN
 const admin = require('firebase-admin');
 
-// 🔥 Verifica se a variável de ambiente existe
 if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
   console.error('❌ ERRO: FIREBASE_SERVICE_ACCOUNT não configurada!');
-  console.error('💡 Adicione a variável de ambiente no Render com o conteúdo do serviceAccountKey.json');
   process.exit(1);
 }
 
-// 🔥 Converte a string JSON para objeto
 let serviceAccount;
 try {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -24,7 +21,6 @@ try {
   process.exit(1);
 }
 
-// 🔥 Inicializa o Firebase Admin
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
@@ -56,7 +52,7 @@ app.get('/', (req, res) => {
 // 🔥 CRIAR PREFERÊNCIA
 app.post('/api/criar-preferencia', async (req, res) => {
   try {
-    const { items, payer, autoReturn } = req.body;
+    const { items, payer, autoReturn, backUrls } = req.body;
 
     console.log('📥 Criando preferência para:', items);
     console.log('👤 Payer recebido:', payer);
@@ -74,13 +70,10 @@ app.post('/api/criar-preferencia', async (req, res) => {
       })),
       payer: {
         name: payer?.name || 'Usuário',
-        email: payer?.email || 'usuario@email.com',
-        metadata: {
-          firebase_uid: payer?.uid || ''
-        }
+        email: payer?.email || 'usuario@email.com'
       },
-      back_urls: {
-        success: `fretesmt://pagamento/sucesso?planoId=${items[0]?.id?.replace('plano_', '') || ''}`,
+      back_urls: backUrls || {
+        success: 'fretesmt://pagamento/sucesso',
         failure: 'fretesmt://pagamento/erro',
         pending: 'fretesmt://pagamento/pendente'
       },
@@ -143,13 +136,11 @@ async function atualizarPlanosPorUid(uid, quantidade) {
   }
 }
 
-// 🔥 WEBHOOK - VERSÃO DEFINITIVA
+// 🔥 WEBHOOK - VERSÃO FINAL
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
-    // 🔥 LER O CORPO DA REQUISIÇÃO CORRETAMENTE
     const body = req.body;
     
-    // 🔥 SE NÃO TIVER CORPO, RETORNA
     if (!body || Object.keys(body).length === 0) {
       console.log('📩 Webhook recebido sem corpo');
       return res.status(200).send('OK');
@@ -157,34 +148,29 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
 
     console.log('📩 Webhook recebido:', JSON.stringify(body, null, 2));
 
-    // 🔥 EXTRAIR O ID DO PAGAMENTO DE DIFERENTES LUGARES
+    // 🔥 IGNORA merchant_order
+    if (body.topic === 'merchant_order') {
+      console.log('📦 Merchant_order ignorado');
+      return res.status(200).send('OK');
+    }
+
     let paymentId = null;
     
-    // 🔥 PRIORIDADE 1: data.id (notificações de payment)
     if (body.data && body.data.id) {
       paymentId = body.data.id;
       console.log(`✅ ID do pagamento (data.id): ${paymentId}`);
     }
     
-    // 🔥 PRIORIDADE 2: resource numérico
     if (!paymentId && body.resource && body.resource.match(/^\d+$/)) {
       paymentId = body.resource;
       console.log(`✅ ID do pagamento (resource): ${paymentId}`);
     }
-    
-    // 🔥 PRIORIDADE 3: id direto
-    if (!paymentId && body.id && body.id.toString().match(/^\d+$/)) {
-      paymentId = body.id.toString();
-      console.log(`✅ ID do pagamento (id): ${paymentId}`);
-    }
 
-    // 🔥 SE NÃO TEM ID, RETORNA
     if (!paymentId) {
       console.log('⏳ Nenhum ID de pagamento encontrado');
       return res.status(200).send('OK');
     }
 
-    // 🔥 BUSCAR O PAGAMENTO
     console.log(`🔍 Buscando pagamento ${paymentId}...`);
     
     try {
@@ -196,15 +182,7 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
       if (response.status === 'approved') {
         console.log('✅✅✅ PAGAMENTO APROVADO! ✅✅✅');
         
-        // 🔥 EXTRAI O UID DO METADATA
-        const firebaseUid = response.payer?.metadata?.firebase_uid || null;
-        const payerEmail = response.payer?.email || null;
         const amount = response.transaction_amount || 0;
-        
-        console.log(`👤 Firebase UID: ${firebaseUid}`);
-        console.log(`👤 Email: ${payerEmail}`);
-        console.log(`💰 Valor: R$ ${amount}`);
-        console.log(`🆔 ID: ${paymentId}`);
         
         // 🔥 DETERMINAR QUANTIDADE
         let quantidade = 1;
@@ -214,47 +192,64 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         else if (amount === 65.99) quantidade = 6;
         else if (amount === 75.99) quantidade = 7;
         
+        console.log(`💰 Valor: R$ ${amount}`);
         console.log(`📦 Quantidade de anúncios: ${quantidade}`);
         
-        // 🔥 ATUALIZAR POR UID
-        let atualizado = false;
+        // 🔥 🔥 🔥 EXTRAIR O UID DOS BACK_URLS (via metadata da preferência)
+        // Buscar a preferência para pegar os back_urls
+        let uid = null;
         
-        if (firebaseUid) {
-          console.log(`✅ UID encontrado no metadata: ${firebaseUid}`);
-          atualizado = await atualizarPlanosPorUid(firebaseUid, quantidade);
-        } else {
-          console.log('⚠️ Nenhum UID encontrado no metadata do pagamento');
+        try {
+          // Buscar a preferência original
+          const preferenceId = response.preference_id;
+          if (preferenceId) {
+            console.log(`🔍 Buscando preferência: ${preferenceId}`);
+            const preference = new Preference(client);
+            const prefResponse = await preference.get({ preferenceId });
+            
+            // Extrair o UID da URL de sucesso
+            const successUrl = prefResponse.back_urls?.success || '';
+            const match = successUrl.match(/uid=([^&]+)/);
+            if (match) {
+              uid = match[1];
+              console.log(`✅ UID extraído da URL: ${uid}`);
+            }
+          }
+        } catch (prefError) {
+          console.log('⚠️ Não foi possível buscar a preferência:', prefError.message);
         }
         
-        // 🔥 FALLBACK: tenta por email
-        if (!atualizado && payerEmail) {
-          console.log(`🔄 Fallback: tentando buscar usuário pelo email: ${payerEmail}`);
+        // 🔥 FALLBACK: tentar por email
+        if (!uid) {
+          const payerEmail = response.payer?.email || null;
+          console.log(`🔄 Tentando fallback por email: ${payerEmail}`);
           
-          const usersRef = db.collection('usuarios');
-          const snapshot = await usersRef.where('email', '==', payerEmail).get();
-          
-          if (!snapshot.empty) {
-            const userDoc = snapshot.docs[0];
-            const uid = userDoc.id;
-            console.log(`✅ Usuário encontrado pelo email! UID: ${uid}`);
-            atualizado = await atualizarPlanosPorUid(uid, quantidade);
-          } else {
-            console.log(`❌ Nenhum usuário encontrado com o email: ${payerEmail}`);
+          if (payerEmail && payerEmail !== 'XXXXXXXXXXX') {
+            const usersRef = db.collection('usuarios');
+            const snapshot = await usersRef.where('email', '==', payerEmail).get();
+            
+            if (!snapshot.empty) {
+              const userDoc = snapshot.docs[0];
+              uid = userDoc.id;
+              console.log(`✅ UID encontrado pelo email: ${uid}`);
+            }
           }
         }
         
-        if (atualizado) {
-          console.log('🎉 Firestore atualizado com sucesso!');
+        // 🔥 ATUALIZAR O FIRESTORE
+        if (uid) {
+          console.log(`🎯 Atualizando Firestore para UID: ${uid}`);
+          const atualizado = await atualizarPlanosPorUid(uid, quantidade);
+          console.log(`✅ Firestore atualizado: ${atualizado}`);
         } else {
-          console.log('❌ NÃO FOI POSSÍVEL ATUALIZAR O FIRESTORE');
+          console.log('❌ Nenhum UID encontrado para atualizar o Firestore');
         }
         
         return res.status(200).json({
           success: true,
           message: 'Pagamento aprovado!',
           paymentId: paymentId,
-          quantidade: quantidade,
-          firestoreAtualizado: atualizado
+          quantidade: quantidade
         });
         
       } else {
