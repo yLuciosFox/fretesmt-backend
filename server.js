@@ -69,12 +69,9 @@ app.post('/api/criar-preferencia', async (req, res) => {
         unit_price: item.unitPrice,
         currency_id: item.currencyId || 'BRL'
       })),
-      payer: {
-        name: payer?.name || 'Usuário',
-        email: payer?.email || 'usuario@email.com',
-        metadata: {
-          firebase_uid: payer?.uid || ''
-        }
+      payer: payer || {
+        name: 'Usuário',
+        email: 'usuario@email.com'
       },
       back_urls: backUrls || {
         success: 'fretesmt://pagamento/sucesso',
@@ -142,7 +139,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
   }
 }
 
-// 🔥 WEBHOOK - VERSÃO FINAL
+// 🔥 WEBHOOK - VERSÃO COMPLETA
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
     const body = req.body;
@@ -200,13 +197,28 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         console.log(`💰 Valor: R$ ${amount}`);
         console.log(`📦 Quantidade de anúncios: ${quantidade}`);
         
-        // 🔥 🔥 🔥 EXTRAIR O UID DO METADATA
+        // 🔥 🔥 🔥 EXTRAIR O UID DA PREFERÊNCIA
         let uid = null;
         
-        // 🔥 PRIORIDADE 1: metadata do pagador
-        if (response.payer?.metadata?.firebase_uid) {
-          uid = response.payer.metadata.firebase_uid;
-          console.log(`✅ UID encontrado no metadata do pagador: ${uid}`);
+        try {
+          const preferenceId = response.preference_id;
+          if (preferenceId) {
+            console.log(`🔍 Buscando preferência: ${preferenceId}`);
+            const preference = new Preference(client);
+            const prefResponse = await preference.get({ preferenceId });
+            
+            // Extrair o UID da URL de sucesso
+            const successUrl = prefResponse.back_urls?.success || '';
+            const match = successUrl.match(/uid=([^&]+)/);
+            if (match) {
+              uid = match[1];
+              console.log(`✅ UID extraído da URL de sucesso: ${uid}`);
+            } else {
+              console.log(`⚠️ Nenhum UID encontrado na URL: ${successUrl}`);
+            }
+          }
+        } catch (prefError) {
+          console.log('⚠️ Não foi possível buscar a preferência:', prefError.message);
         }
         
         // 🔥 FALLBACK: tentar por email
@@ -222,6 +234,8 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
               const userDoc = snapshot.docs[0];
               uid = userDoc.id;
               console.log(`✅ UID encontrado pelo email: ${uid}`);
+            } else {
+              console.log(`❌ Nenhum usuário encontrado com o email: ${payerEmail}`);
             }
           }
         }
@@ -235,6 +249,7 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
           console.log('❌ NENHUM UID ENCONTRADO!');
           console.log('📝 Dados disponíveis:');
           console.log(`   - Email: ${response.payer?.email || 'N/A'}`);
+          console.log(`   - Preference ID: ${response.preference_id || 'N/A'}`);
           console.log(`   - Metadata: ${JSON.stringify(response.payer?.metadata || {})}`);
         }
         
@@ -242,7 +257,8 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
           success: true,
           message: 'Pagamento aprovado!',
           paymentId: paymentId,
-          quantidade: quantidade
+          quantidade: quantidade,
+          uidEncontrado: uid || null
         });
         
       } else {
