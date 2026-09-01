@@ -52,14 +52,16 @@ app.get('/', (req, res) => {
 // 🔥 CRIAR PREFERÊNCIA
 app.post('/api/criar-preferencia', async (req, res) => {
   try {
-    const { items, payer, autoReturn, backUrls } = req.body;
+    const { items, payer, autoReturn, backUrls, externalReference } = req.body;
 
     console.log('📥 Criando preferência para:', items);
     console.log('👤 Payer recebido:', payer);
+    console.log('🔗 External Reference:', externalReference);
 
-    // 🔥 BUSCAR O UID NO FIRESTORE PELO EMAIL
-    let firebaseUid = null;
-    if (payer && payer.email) {
+    // 🔥 BUSCAR O UID NO FIRESTORE PELO EMAIL (FALLBACK)
+    let firebaseUid = externalReference || null;
+    
+    if (!firebaseUid && payer && payer.email) {
       try {
         const usersRef = db.collection('usuarios');
         const snapshot = await usersRef.where('email', '==', payer.email).get();
@@ -68,8 +70,6 @@ app.post('/api/criar-preferencia', async (req, res) => {
           const userDoc = snapshot.docs[0];
           firebaseUid = userDoc.id;
           console.log(`✅ UID encontrado no Firestore para ${payer.email}: ${firebaseUid}`);
-        } else {
-          console.log(`❌ Usuário com email ${payer.email} não encontrado`);
         }
       } catch (error) {
         console.error('❌ Erro ao buscar usuário:', error.message);
@@ -89,10 +89,7 @@ app.post('/api/criar-preferencia', async (req, res) => {
       })),
       payer: {
         name: payer?.name || 'Usuário',
-        email: payer?.email || 'usuario@email.com',
-        metadata: {
-          firebase_uid: firebaseUid || ''
-        }
+        email: payer?.email || 'usuario@email.com'
       },
       back_urls: backUrls || {
         success: `fretesmt://pagamento/sucesso?planoId=${items[0]?.id?.replace('plano_', '') || ''}`,
@@ -101,7 +98,8 @@ app.post('/api/criar-preferencia', async (req, res) => {
       },
       auto_return: autoReturn || 'approved',
       statement_descriptor: 'FRETESMT',
-      notification_url: `https://fretesmt-backend.onrender.com/api/notificacao-pagamento`
+      notification_url: `https://fretesmt-backend.onrender.com/api/notificacao-pagamento`,
+      external_reference: firebaseUid || ''  // 🔥🔥🔥 ENVIA O UID
     };
 
     console.log('📦 Body enviado:', JSON.stringify(body, null, 2));
@@ -109,22 +107,7 @@ app.post('/api/criar-preferencia', async (req, res) => {
     const response = await preference.create({ body });
 
     console.log('✅ Preferência criada:', response.id);
-
-    // 🔥 🔥 🔥 SALVAR O UID COM O PREFERENCE_ID NO FIRESTORE
-    if (firebaseUid) {
-      try {
-        await db.collection('preferencias').doc(response.id).set({
-          uid: firebaseUid,
-          email: payer?.email || '',
-          createdAt: Date.now(),
-          planoId: items[0]?.id?.replace('plano_', '') || '',
-          quantidade: items[0]?.quantity || 1
-        });
-        console.log(`✅ UID ${firebaseUid} salvo com preference_id: ${response.id}`);
-      } catch (saveError) {
-        console.error('❌ Erro ao salvar referência:', saveError.message);
-      }
-    }
+    console.log(`✅ External Reference enviado: ${firebaseUid || 'N/A'}`);
 
     res.status(200).json({
       success: true,
@@ -176,7 +159,7 @@ async function atualizarPlanosPorUid(uid, quantidade) {
   }
 }
 
-// 🔥 WEBHOOK
+// 🔥 WEBHOOK - USANDO external_reference
 app.post('/api/notificacao-pagamento', async (req, res) => {
   try {
     const body = req.body;
@@ -233,31 +216,18 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         console.log(`💰 Valor: R$ ${amount}`);
         console.log(`📦 Quantidade de anúncios: ${quantidade}`);
         
-        // 🔥 🔥 🔥 BUSCAR O UID NO FIRESTORE PELO PREFERENCE_ID
-        let uid = null;
-        const preferenceId = response.preference_id;
+        // 🔥 🔥 🔥 PEGAR O UID DO external_reference
+        let uid = response.external_reference || null;
         
-        if (preferenceId) {
-          try {
-            console.log(`🔍 Buscando UID no Firestore com preference_id: ${preferenceId}`);
-            const prefDoc = await db.collection('preferencias').doc(preferenceId).get();
-            
-            if (prefDoc.exists) {
-              uid = prefDoc.data().uid;
-              console.log(`✅ UID encontrado: ${uid}`);
-            } else {
-              console.log(`⚠️ preference_id ${preferenceId} não encontrado no Firestore`);
-            }
-          } catch (error) {
-            console.log('⚠️ Erro ao buscar referência:', error.message);
-          }
+        if (uid) {
+          console.log(`✅ UID encontrado no external_reference: ${uid}`);
         } else {
-          console.log('⚠️ Nenhum preference_id encontrado na resposta do webhook');
-          console.log('📝 Tentando buscar pelo email do pagador...');
+          console.log('⚠️ Nenhum external_reference encontrado');
           
-          // 🔥 FALLBACK: buscar pelo email no Firestore
+          // 🔥 FALLBACK: buscar pelo email
           const payerEmail = response.payer?.email || null;
           if (payerEmail && payerEmail !== 'XXXXXXXXXXX') {
+            console.log(`🔄 Tentando buscar pelo email: ${payerEmail}`);
             try {
               const usersRef = db.collection('usuarios');
               const snapshot = await usersRef.where('email', '==', payerEmail).get();
@@ -279,16 +249,8 @@ app.post('/api/notificacao-pagamento', async (req, res) => {
         } else {
           console.log('❌ NENHUM UID ENCONTRADO!');
           console.log('📝 Dados disponíveis:');
-          console.log(`   - Preference ID: ${preferenceId || 'N/A'}`);
+          console.log(`   - External Reference: ${response.external_reference || 'N/A'}`);
           console.log(`   - Email: ${response.payer?.email || 'N/A'}`);
-        }
-        
-        // 🔥 LIMPAR A REFERÊNCIA (opcional)
-        if (preferenceId) {
-          try {
-            await db.collection('preferencias').doc(preferenceId).delete();
-            console.log(`🗑️ Referência ${preferenceId} removida`);
-          } catch (e) {}
         }
         
         return res.status(200).json({
