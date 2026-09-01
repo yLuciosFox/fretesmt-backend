@@ -1,0 +1,15 @@
+[33mfe0a135[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Adicionando .gitignore e removendo chave
+[33mf9ad40b[m PlanoViewModel: usando PayerInfo com uid para metadata
+[33mf6a3ce8[m PlanoViewModel: usando PayerInfo com uid para metadata
+[33m0646957[m PlanoViewModel: usando PayerInfo com uid para metadata
+[33maaf09b2[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Webhook: usando UID para atualizar Firestore
+[33m8295b19[m Integração Firestore: atualiza planosAdquiridos
+[33m8a8811d[m Integração Firestore: atualiza planosAdquiridos
+[33mc0044f8[m Webhook definitivo: extraindo data.id corretamente
+[33md09978c[m Corrigindo extração do ID do pagamento no webhook
+[33mbdb6f63[m Webhook corrigido para processar pagamentos
+[33mfb1e69e[m Corrigindo back_urls para Mercado Pago
+[33mc9e128b[m Corrigindo URL do webhook para produção
+[33mc7eb991[m Backend pronto para deploy
+[33m90d8f6a[m npm install
+[33m7520746[m Initial commit
